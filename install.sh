@@ -3,6 +3,8 @@
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+source "$ROOT/lib/common.sh"
 DEST="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/image-autoname"
 BIN="${XDG_BIN_HOME:-$HOME/.local/bin}"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy"
@@ -108,16 +110,20 @@ if ((${#MISSING[@]})); then
   echo "Missing commands: ${MISSING[*]}"
   echo "On Omarchy:  omarchy pkg add jq inotify-tools imagemagick"
   echo "Optional:    omarchy pkg add ollama tesseract tesseract-data-eng tesseract-data-fra"
+  echo "Optional:    Lemonade + FastFlowLM (https://github.com/lemonade-sdk/lemonade) for AMD NPU vision"
 else
   echo "Required commands are present."
 fi
 
-if ! command -v ollama >/dev/null; then
-  echo "Ollama is not installed. Local vision will be skipped until it is."
+if lemonade_api_base "${LEMONADE_HOST:-http://127.0.0.1:8000}" >/dev/null 2>&1; then
+  echo "Lemonade is running; auto will prefer it over Ollama."
+elif ! command -v ollama >/dev/null; then
+  echo "Ollama is not installed. Local vision will be skipped until Ollama or Lemonade is available."
 elif ((PULL_MODEL == 1)); then
   ollama pull "${OLLAMA_MODEL:-qwen2.5vl:3b}"
 else
   echo "Vision model: ollama pull qwen2.5vl:3b   (or rerun ./install.sh --pull-model)"
+  echo "Or start Lemonade with a vision model; auto prefers it when the server is up."
 fi
 
 echo

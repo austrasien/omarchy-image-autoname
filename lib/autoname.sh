@@ -14,6 +14,8 @@ BACKEND="${BACKEND:-auto}"
 LANGUAGE="${LANGUAGE:-en}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5vl:3b}"
+LEMONADE_HOST="${LEMONADE_HOST:-http://127.0.0.1:8000}"
+LEMONADE_MODEL="${LEMONADE_MODEL:-}"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
 OCR_LANGS="${OCR_LANGS:-eng+fra}"
 SYMLINK_SECONDS="${SYMLINK_SECONDS:-180}"
@@ -188,6 +190,48 @@ build_prompt() {
   printf '%s' "$prompt"
 }
 
+describe_lemonade() {
+  local base json model tmp prompt jsonf resp imgf mime recipe
+  base=$(lemonade_api_base "$LEMONADE_HOST") || return 1
+  json=$(curl -sf --max-time 2 "$base/models") || return 1
+  model=$(printf '%s' "$json" | lemonade_pick_vision_model "${LEMONADE_MODEL:-}") || return 1
+  recipe=$(jq -r --arg m "$model" '.data[]? | select(.id == $m) | .recipe // empty' <<<"$json")
+  log "Lemonade model $model${recipe:+ (recipe $recipe)}"
+
+  tmp=$(mktemp --suffix=.jpg)
+  magick "$FILE" -auto-orient -resize '768x768>' -strip -quality 75 "$tmp" || cp -- "$FILE" "$tmp"
+  mime=$(file --brief --mime-type "$tmp")
+  prompt=$(build_prompt)
+
+  imgf=$(mktemp)
+  jsonf=$(mktemp)
+  base64 -w0 "$tmp" >"$imgf"
+  rm -f "$tmp"
+  jq -n \
+    --arg model "$model" \
+    --arg prompt "$prompt" \
+    --arg mime "$mime" \
+    --rawfile img "$imgf" \
+    '{
+      model: $model,
+      temperature: 0.1,
+      max_tokens: 32,
+      messages: [{
+        role: "user",
+        content: [
+          {type: "text", text: $prompt},
+          {type: "image_url", image_url: {url: ("data:" + $mime + ";base64," + $img)}}
+        ]
+      }]
+    }' >"$jsonf"
+  rm -f "$imgf"
+  resp=$(curl -sf --max-time 45 "$base/chat/completions" \
+    -H 'Content-Type: application/json' \
+    --data-binary @"$jsonf") || { rm -f "$jsonf"; return 1; }
+  rm -f "$jsonf"
+  jq -r '.choices[0].message.content // empty' <<<"$resp"
+}
+
 describe_ollama() {
   curl -sf --max-time 1 "$OLLAMA_HOST/api/tags" >/dev/null || return 1
   curl -sf --max-time 1 "$OLLAMA_HOST/api/tags" \
@@ -281,11 +325,16 @@ describe_ocr() {
 describe_image() {
   local title=""
   case "$BACKEND" in
+    lemonade) title=$(describe_lemonade || true) ;;
     ollama) title=$(describe_ollama || true) ;;
     gemini) title=$(describe_gemini || true) ;;
     ocr) title=$(describe_ocr || true) ;;
     auto)
-      title=$(describe_ollama || true)
+      title=$(describe_lemonade || true)
+      if [[ -z $title ]]; then
+        log "Lemonade unavailable, trying Ollama"
+        title=$(describe_ollama || true)
+      fi
       if [[ -z $title ]]; then
         log "Ollama unavailable, trying Gemini"
         title=$(describe_gemini || true)

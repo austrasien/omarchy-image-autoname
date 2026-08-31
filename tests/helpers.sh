@@ -50,6 +50,28 @@ clean=$(clean_window_title "Inbox | Messages - Brave Work")
 [[ $clean == "Inbox | Messages" ]] || { echo "FAIL: clean_window_title '$clean'" >&2; fail=1; }
 echo "ok: strip Brave profile suffix"
 
+models_json='{"data":[
+  {"id":"Qwen3-0.6B-GGUF","recipe":"llamacpp","labels":["reasoning"]},
+  {"id":"Gemma-3-4b-it-GGUF","recipe":"llamacpp","labels":["hot","vision"]},
+  {"id":"qwen3.5-4b-FLM","recipe":"flm","labels":["vision"]},
+  {"id":"SD-Turbo","recipe":"sd-cpp","labels":["image"]}
+]}'
+got=$(printf '%s' "$models_json" | lemonade_pick_vision_model)
+[[ $got == "qwen3.5-4b-FLM" ]] || { echo "FAIL: FastFlowLM should win '$got'" >&2; fail=1; }
+echo "ok: lemonade prefers FastFlowLM"
+got=$(printf '%s' '{"data":[{"id":"Gemma-3-4b-it-GGUF","recipe":"llamacpp","labels":["vision"]}]}' | lemonade_pick_vision_model)
+[[ $got == "Gemma-3-4b-it-GGUF" ]] || { echo "FAIL: GGUF vision pick '$got'" >&2; fail=1; }
+echo "ok: lemonade GGUF vision fallback"
+got=$(printf '%s' "$models_json" | lemonade_pick_vision_model "Gemma-3-4b-it-GGUF")
+[[ $got == "Gemma-3-4b-it-GGUF" ]] || { echo "FAIL: preferred model '$got'" >&2; fail=1; }
+echo "ok: lemonade preferred model"
+if printf '%s' "$models_json" | lemonade_pick_vision_model "missing-model"; then
+  echo "FAIL: missing lemonade model should error" >&2
+  fail=1
+else
+  echo "ok: lemonade missing model"
+fi
+
 if ((fail)); then
   echo "Some checks failed" >&2
   exit 1

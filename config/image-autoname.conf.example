@@ -6,7 +6,8 @@ WATCH_DIRS=(
   "$HOME/Downloads"
 )
 
-# auto: Ollama (local) → Gemini if GEMINI_API_KEY is set → Tesseract OCR
+# auto: Lemonade (if a vision model is loaded) → Ollama → Gemini if GEMINI_API_KEY is set → Tesseract
+# Force one engine with: lemonade | ollama | gemini | ocr
 BACKEND=auto
 
 # Filename language for the vision model: en or fr
@@ -14,6 +15,11 @@ LANGUAGE=en
 
 # Seconds to keep screenshot-*.png as a symlink so the Omarchy "Edit" toast still opens.
 SYMLINK_SECONDS=180
+
+# AMD Lemonade (OpenAI-compatible). Used when the server is already running.
+# Auto-picks a vision model, preferring FastFlowLM (recipe flm, often *-FLM) on the NPU.
+LEMONADE_HOST=http://127.0.0.1:8000
+# LEMONADE_MODEL=qwen3.5-4b-FLM
 
 OLLAMA_HOST=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen2.5vl:3b

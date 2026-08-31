@@ -322,3 +322,52 @@ is_junk_title() {
   ((only_menu == 1)) && return 0
   return 1
 }
+
+# Lemonade (AMD local server) speaks OpenAI at /api/v1 or /v1.
+lemonade_api_base() {
+  local host=${1:-http://127.0.0.1:8000}
+  host=${host%/}
+  local p
+  for p in api/v1 v1; do
+    if curl -sf --max-time 1 "$host/$p/models" >/dev/null; then
+      printf '%s' "$host/$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# stdin: OpenAI-style models list JSON. $1 = optional preferred model id.
+# Prefers FastFlowLM (recipe flm / *-FLM) so Ryzen AI NPU is used when available.
+lemonade_pick_vision_model() {
+  local preferred=${1:-} json id
+  json=$(cat)
+  [[ -n $json ]] || return 1
+  if [[ -n $preferred ]]; then
+    id=$(jq -r --arg m "$preferred" '
+      .data[]? | select(.id == $m or (.id | startswith($m))) | .id
+    ' <<<"$json" | awk 'NF { print; exit }')
+    [[ -n $id ]] || return 1
+    printf '%s' "$id"
+    return 0
+  fi
+  id=$(jq -r '
+    [
+      .data[]?
+      | select(
+          ((.labels // []) | index("vision"))
+          or ((.id // "") | test("FLM|(?i)(-VL|VL-|vision)"))
+        )
+      | select((.labels // []) | index("image") | not)
+    ]
+    | sort_by(
+        if .recipe == "flm" then 0
+        elif ((.id // "") | test("(?i)-FLM")) then 1
+        elif .recipe == "ryzenai-llm" then 2
+        else 3 end
+      )
+    | .[0].id // empty
+  ' <<<"$json")
+  [[ -n $id && $id != null ]] || return 1
+  printf '%s' "$id"
+}
