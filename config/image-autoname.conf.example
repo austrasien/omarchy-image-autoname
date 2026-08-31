@@ -1,0 +1,30 @@
+# Auto-name new screenshots and downloaded images from their contents.
+# Copy to ~/.config/omarchy/image-autoname.conf (install.sh does this if missing).
+
+WATCH_DIRS=(
+  "$HOME/Pictures"
+  "$HOME/Downloads"
+)
+
+# auto: Ollama (local) → Gemini if GEMINI_API_KEY is set → Tesseract OCR
+BACKEND=auto
+
+# Filename language for the vision model: en or fr
+LANGUAGE=en
+
+# Seconds to keep screenshot-*.png as a symlink so the Omarchy "Edit" toast still opens.
+SYMLINK_SECONDS=180
+
+OLLAMA_HOST=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen2.5vl:3b
+GEMINI_MODEL=gemini-2.5-flash
+OCR_LANGS=eng+fra
+
+# Optional Vulkan / iGPU hints for Ollama. Leave commented otherwise.
+# OLLAMA_VULKAN=1
+# OLLAMA_IGPU_ENABLE=1
+# GGML_VK_VISIBLE_DEVICES=0
+
+# Optional cloud fallback. Uncomment only if you accept sending resized screenshots
+# to Google. Prefer a session environment variable over storing a key in this file.
+# GEMINI_API_KEY=
