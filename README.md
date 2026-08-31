@@ -1,6 +1,8 @@
-# image-autoname
+# Auto-Name Omarchy Screenshots
 
-Rename new Omarchy screenshots (and generic downloads) from the focused window plus a **local** vision model.
+A **user-space companion** for [Omarchy](https://omarchy.org/) that turns generic captures into readable filenames — using the **focused window** plus a **local vision model**. No patch to `/usr/share/omarchy`.
+
+> **⚡ Built for Hyprland Print:** snapshots the window *when you hit Print*, then Omarchy saves as usual. A watcher renames `screenshot-YYYY-MM-DD_HH-MM-SS.png` a moment later.
 
 ```
 Brave - Page Discord - Channel discussion - 2026-01-15_09-30-00.png
@@ -8,62 +10,103 @@ Brave - Page GitHub - Pull request review - 2026-01-15_09-31-12.png
 Kitty - git status - 2026-01-15_09-32-04.png
 ```
 
-It does not patch `/usr/share/omarchy`. Screenshots are still taken by Omarchy; this project wraps Print, remembers the focused window, and renames the file afterwards.
+---
 
-## How it works
+### ☕ Support the Project
+If this saves you from a Pictures folder full of identical `screenshot-*.png` names, a tip is always appreciated.
 
-1. **Print** runs `capture-screenshot.sh`, which snapshots the focused Hyprland window (title, class, PWA host), then calls the real `omarchy-capture-screenshot`.
-2. Omarchy writes `~/Pictures/screenshot-YYYY-MM-DD_HH-MM-SS.png`.
-3. **watch.sh** notices the file (and generic names in `~/Downloads`).
-4. **autoname.sh** asks a local Ollama vision model what is happening in the rest of the image. The **site** comes from the window class / tab title (`brave-github.com…` → GitHub). Vague labels like “web page” are discarded in favour of the tab title.
-5. The original `screenshot-*.png` path is kept as a symlink for a few minutes so Omarchy’s “Edit” notification still opens.
+[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg?style=for-the-badge&logo=paypal)](https://paypal.me/austraz)
 
-Native apps skip the `Page {Site}` segment.
+---
 
-Only **generic** names are renamed (`screenshot-*`, `image.png`, `IMG_1234`, `Capture d’écran`, …). A file you already named `logo-acme.png` is left alone.
+### 💬 Feedback & Community
+Got a question, found a bug, or have a suggestion? Open an [**issue**](https://github.com/austrasien/omarchy-image-autoname/issues).
 
-## Requirements
+---
 
-- [Omarchy](https://omarchy.org/) (Hyprland)
-- `jq`, `inotify-tools`, ImageMagick (`magick`), `curl`
-- Optional, recommended: [Ollama](https://ollama.com/) and `qwen2.5vl:3b`
-- Optional fallback: Tesseract (`tesseract-data-eng`, `tesseract-data-fra`)
-- Optional cloud fallback: `GEMINI_API_KEY` (off by default)
+## 🚀 Overview
 
-On Omarchy:
+Omarchy already takes excellent screenshots. This project only names them. Print still goes through the real `omarchy-capture-screenshot`; we wrap it, remember which window was focused, and rename the file afterwards.
+
+**Why bother?**
+
+| | Without ❌ | With image-autoname ✅ |
+| :--- | :--- | :--- |
+| **Filename** | `screenshot-2026-01-15_09-30-00.png` | `Brave - Page Discord - Channel discussion - …` |
+| **Context** | Date only | App, site (from the PWA/window class), and what is on screen |
+| **Privacy** | — | Local Ollama by default; cloud Gemini is opt-in |
+| **Your files** | — | Only *generic* names are touched (`screenshot-*`, `IMG_1234`, …) |
+
+> **Note:** This is **not** an Omarchy shell plugin. `omarchy plugin add` installs QML into `omarchy-shell` and never runs an installer, so it cannot rebind Print, start a watcher, or pull a vision model.
+
+## ✨ Key Features
+
+### 🪟 Window context at Print time
+- Records title, class, and PWA host (`brave-github.com…` → **GitHub**) *before* the screenshot tool runs.
+- Native apps skip the `Page {Site}` segment: `Kitty - git status - …`.
+- A Brave *profile* name (no domain in the class) is never treated as a website.
+
+### 🔍 Local vision, then a sensible fallback
+- Asks [Ollama](https://ollama.com/) (`qwen2.5vl:3b` by default) what is happening **in the rest of the capture**.
+- Discards vague labels (`web page`, `site web`, `application web`) and falls back to the tab title.
+- Optional Tesseract OCR, then optional Gemini if `GEMINI_API_KEY` is set.
+
+### 🛡 Conservative by default
+- Leaves `logo-acme.png` and anything you already named alone.
+- Keeps the original `screenshot-*.png` path as a symlink for a few minutes so Omarchy’s **Edit** notification still opens.
+- Window hints live in `$XDG_RUNTIME_DIR` (tmpfs), not next to the pictures.
+
+### 🌍 Filename language
+- 🇬🇧 **English** (default) — `LANGUAGE=en`
+- 🇫🇷 **French** — `LANGUAGE=fr`
+
+## 🛠 Installation (Omarchy)
+
+1. **Install packages** (in a terminal):
+
+   ```sh
+   omarchy pkg add jq inotify-tools imagemagick ollama tesseract tesseract-data-eng tesseract-data-fra
+   ```
+
+2. **Clone and install:**
+
+   ```sh
+   git clone https://github.com/austrasien/omarchy-image-autoname.git
+   cd omarchy-image-autoname
+   ./install.sh --pull-model
+   ```
+
+3. **Reload Hyprland** so Print is rebound:
+
+   ```sh
+   hyprctl reload
+   ```
+
+4. **Start the watcher** (or log out and back in):
+
+   ```sh
+   ~/.config/omarchy/image-autoname/watch.sh &
+   ```
+
+`install.sh` copies scripts to `~/.config/omarchy/image-autoname/`, puts wrappers in `~/.local/bin`, and appends marked snippets to `~/.config/hypr/autostart.lua` and `bindings.lua` if they are missing. It **never** overwrites an existing `image-autoname.conf`.
+
+Remove with `./uninstall.sh`. Renamed pictures and your config file are kept.
+
+### Manual rename
 
 ```sh
-omarchy pkg add jq inotify-tools imagemagick ollama tesseract tesseract-data-eng tesseract-data-fra
+image-autoname --force ~/Pictures/some-generic-name.png
 ```
 
-## Install
+## ⚙️ Configuration
 
-```sh
-git clone https://github.com/austrasien/omarchy-image-autoname.git
-cd omarchy-image-autoname
-./install.sh --pull-model
-hyprctl reload
-```
-
-`install.sh` copies the scripts to `~/.config/omarchy/image-autoname/`, puts wrappers in `~/.local/bin`, and appends marked snippets to `~/.config/hypr/autostart.lua` and `bindings.lua` if they are not already there. It never overwrites an existing `image-autoname.conf`.
-
-Start the watcher now (or log out and back in):
-
-```sh
-~/.config/omarchy/image-autoname/watch.sh &
-```
-
-Remove with `./uninstall.sh`. Your renamed pictures and `image-autoname.conf` are kept.
-
-## Configuration
-
-`~/.config/omarchy/image-autoname.conf` — see `config/image-autoname.conf.example`.
+`~/.config/omarchy/image-autoname.conf` — see [`config/image-autoname.conf.example`](config/image-autoname.conf.example).
 
 | Variable | Meaning |
-|---|---|
-| `WATCH_DIRS` | Directories to watch |
+| :--- | :--- |
+| `WATCH_DIRS` | Directories to watch (`Pictures` and `Downloads` by default) |
 | `BACKEND` | `auto` (default), `ollama`, `gemini`, or `ocr` |
-| `LANGUAGE` | `en` (default) or `fr` for the vision prompt |
+| `LANGUAGE` | `en` (default) or `fr` |
 | `OLLAMA_MODEL` | Default `qwen2.5vl:3b` |
 | `SYMLINK_SECONDS` | How long the original screenshot path stays as a symlink |
 
@@ -73,21 +116,11 @@ French filenames:
 LANGUAGE=fr
 ```
 
-## Privacy
+Gemini, if enabled, receives a **resized** copy of the image. Leave `GEMINI_API_KEY` unset unless that is acceptable.
 
-- Vision is **local** (Ollama) unless you set `GEMINI_API_KEY`.
-- Window hints live in `$XDG_RUNTIME_DIR` (tmpfs, gone at logout). They are not written next to the pictures.
-- Gemini, if enabled, receives a **resized** copy of the image. Do not turn it on if that is unacceptable.
-- The watcher never uploads files by itself.
+## ⚖️ License
 
-This is not an Omarchy shell plugin. `omarchy plugin add` only installs QML into `omarchy-shell` and does not run installers, so a marketplace listing would not be able to install Ollama, rebind Print, or start the watcher.
+Licensed under the **MIT License**. Permissive for both personal and commercial use, provided attribution is maintained.
 
-## Manual rename
-
-```sh
-image-autoname --force ~/Pictures/some-generic-name.png
-```
-
-## License
-
-MIT
+---
+*Developed to give Omarchy screenshots names you can actually search for — without sending your desktop to the cloud.*
