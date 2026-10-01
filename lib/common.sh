@@ -5,9 +5,141 @@ STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/image-autoname"
 HINT_DIR="$STATE_DIR/by-file"
 
 abort_ollama_runner() {
+  # Only used when we started this Ollama ourselves and it is wedged.
+  [[ -f $STATE_DIR/started-ollama ]] || return 0
   local pid
   pid=$(pgrep -x ollama | head -n1) || return 0
   pkill -P "$pid" -f '/usr/lib/ollama/llama-server' 2>/dev/null || true
+}
+
+lemonade_gui_running() {
+  pgrep -x lemonade-app >/dev/null 2>&1
+}
+
+# Currently loaded LLM id, or empty.
+lemonade_loaded_model() {
+  local base=${1:-} json
+  [[ -n $base ]] || base=$(lemonade_api_base "${LEMONADE_HOST:-}") || return 0
+  json=$(curl -sf --max-time 2 "$base/health") || return 0
+  jq -r '.model_loaded // empty' <<<"$json" | awk 'NF && $0 != "null" { print; exit }'
+}
+
+# want=our vision id, have=currently loaded id.
+# use = already loaded (caller must not unload)
+# load = slot free, we may load and later unload
+# skip = another model occupies the NPU; do not evict
+lemonade_slot_action() {
+  local want=${1:-} have=${2:-}
+  if [[ -z $have || $have == null ]]; then
+    printf '%s' load
+    return
+  fi
+  if [[ $have == "$want" || $have == "$want"* || $want == "$have"* ]]; then
+    printf '%s' use
+    return
+  fi
+  printf '%s' skip
+}
+
+note_vision_use() {
+  mkdir -p "$STATE_DIR"
+  date +%s >"$STATE_DIR/last-vision-use"
+}
+
+remember_our_lemonade_model() {
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' "$1" >"$STATE_DIR/our-lemonade-model"
+  note_vision_use
+}
+
+lemonade_unload_model() {
+  local base model=$1
+  [[ -n $model ]] || return 0
+  base=$(lemonade_api_base "${LEMONADE_HOST:-}") || return 0
+  curl -sf --max-time 15 "$base/unload" \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg m "$model" '{model_name:$m}')" >/dev/null || true
+}
+
+ensure_lemonade_server() {
+  local host=${LEMONADE_HOST:-http://127.0.0.1:13305} i
+  lemonade_api_base "$host" >/dev/null && return 0
+  command -v lemond >/dev/null || return 1
+  mkdir -p "$STATE_DIR"
+  if systemctl --user is-active --quiet lemond.service 2>/dev/null; then
+    :
+  elif systemctl --user start lemond.service 2>/dev/null; then
+    printf '%s\n' "$(date +%s)" >"$STATE_DIR/started-lemond"
+  else
+    return 1
+  fi
+  for i in $(seq 1 30); do
+    lemonade_api_base "$host" >/dev/null && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+ensure_ollama_server() {
+  local host=${OLLAMA_HOST:-http://127.0.0.1:11434} logdir i
+  curl -sf --max-time 1 "$host/api/version" >/dev/null && return 0
+  command -v ollama >/dev/null || return 1
+  mkdir -p "$STATE_DIR"
+  if systemctl --user is-active --quiet ollama.service 2>/dev/null; then
+    :
+  elif systemctl --user start ollama.service 2>/dev/null; then
+    printf '%s\n' "$(date +%s)" >"$STATE_DIR/started-ollama"
+  else
+    logdir="${XDG_STATE_HOME:-$HOME/.local/state}/image-autoname"
+    mkdir -p "$logdir"
+    [[ -n ${OLLAMA_VULKAN:-} ]] && export OLLAMA_VULKAN
+    [[ -n ${OLLAMA_IGPU_ENABLE:-} ]] && export OLLAMA_IGPU_ENABLE
+    [[ -n ${GGML_VK_VISIBLE_DEVICES:-} ]] && export GGML_VK_VISIBLE_DEVICES
+    nice -n 10 ollama serve >>"$logdir/ollama.log" 2>&1 &
+    printf '%s\n' $! >"$STATE_DIR/started-ollama"
+  fi
+  for i in $(seq 1 20); do
+    curl -sf --max-time 1 "$host/api/version" >/dev/null && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+# Unload only a model we loaded. Never touch a model the user already had.
+# Idle timer is VISION_KEEP_ALIVE seconds (default 300), reset by note_vision_use.
+release_idle_runtimes() {
+  local idle=${VISION_KEEP_ALIVE:-300} now last=0 ts=0 ours loaded base
+  now=$(date +%s)
+  # Keep-alive is the most recent of last use AND when we started lemond.
+  # Using only last-vision-use let this watcher stop a server another job
+  # had just launched (e.g. translate), mid-load.
+  for tsfile in "$STATE_DIR/last-vision-use" "$STATE_DIR/started-lemond"; do
+    [[ -f $tsfile ]] || continue
+    ts=$(tr -d '\n' <"$tsfile" 2>/dev/null || echo 0)
+    [[ $ts =~ ^[0-9]+$ ]] || continue
+    ((ts > last)) && last=$ts
+  done
+  ((now - last >= idle)) || return 0
+
+  if [[ -f $STATE_DIR/our-lemonade-model ]]; then
+    ours=$(tr -d '\n' <"$STATE_DIR/our-lemonade-model")
+    if lemonade_gui_running; then
+      : # User has the app open — they may be using this model. Leave it.
+    elif [[ -n $ours ]]; then
+      loaded=$(lemonade_loaded_model) || loaded=
+      if [[ $loaded == "$ours" || $loaded == "$ours"* ]]; then
+        lemonade_unload_model "$ours"
+      fi
+      rm -f "$STATE_DIR/our-lemonade-model"
+    fi
+  fi
+
+  if [[ -f $STATE_DIR/started-lemond ]] && ! lemonade_gui_running; then
+    [[ -f $STATE_DIR/our-lemonade-model ]] || {
+      systemctl --user stop lemond.service 2>/dev/null || true
+      rm -f "$STATE_DIR/started-lemond"
+    }
+  fi
 }
 
 snapshot_window() {
@@ -53,14 +185,14 @@ pretty_app_name() {
   local key=${raw##*.}
   key=${key%%:*}
   if [[ -n $key && $key != "$raw" ]]; then
-    printf '%s' "$key" | tr '-_.' '   ' | awk '{
+    printf '%s' "$key" | tr -- '-_.' '   ' | awk '{
       for (i = 1; i <= NF; i++) $i = toupper(substr($i, 1, 1)) substr($i, 2)
       print
     }'
     return
   fi
   if [[ -n $raw ]]; then
-    printf '%s' "$raw" | tr '-_.' '   ' | awk '{
+    printf '%s' "$raw" | tr -- '-_.' '   ' | awk '{
       for (i = 1; i <= NF; i++) $i = toupper(substr($i, 1, 1)) substr($i, 2)
       print
     }'
@@ -107,6 +239,7 @@ pretty_site_from_host() {
     news.google.* | *news.google.*) printf '%s' "Google News" ;;
     mail.google.* | *gmail*) printf '%s' "Gmail" ;;
     chat.google.* | messages.google.*) printf '%s' "Google Chat" ;;
+    meet.google.*) printf '%s' "Google Meet" ;;
     *youtube*) printf '%s' "YouTube" ;;
     *github*) printf '%s' "GitHub" ;;
     x.com | x.com.* | *.x.com | *twitter.com*) printf '%s' "X" ;;
@@ -324,49 +457,56 @@ is_junk_title() {
 }
 
 # Lemonade (AMD local server) speaks OpenAI at /api/v1 or /v1.
+# Current Lemonade default port is 13305; older docs used 8000.
 lemonade_api_base() {
-  local host=${1:-http://127.0.0.1:8000}
-  host=${host%/}
-  local p
-  for p in api/v1 v1; do
-    if curl -sf --max-time 1 "$host/$p/models" >/dev/null; then
-      printf '%s' "$host/$p"
-      return 0
-    fi
+  local given=${1:-} host p
+  local -a hosts=()
+  [[ -n $given ]] && hosts+=("${given%/}")
+  hosts+=(http://127.0.0.1:13305 http://127.0.0.1:8000)
+  local seen=""
+  for host in "${hosts[@]}"; do
+    host=${host%/}
+    [[ $seen == *" $host "* ]] && continue
+    seen+=" $host "
+    for p in api/v1 v1; do
+      if curl -sf --max-time 1 "$host/$p/models" >/dev/null; then
+        printf '%s' "$host/$p"
+        return 0
+      fi
+    done
   done
   return 1
 }
 
-# stdin: OpenAI-style models list JSON. $1 = optional preferred model id.
-# Prefers FastFlowLM (recipe flm / *-FLM) so Ryzen AI NPU is used when available.
+# stdin: OpenAI-style models list JSON. $1 = preferred model id (tried first).
+# Only considers downloaded models that can actually see images (not every *-FLM).
+# If the preferred id is missing, picks the lightest remaining vision model.
 lemonade_pick_vision_model() {
   local preferred=${1:-} json id
   json=$(cat)
   [[ -n $json ]] || return 1
-  if [[ -n $preferred ]]; then
-    id=$(jq -r --arg m "$preferred" '
-      .data[]? | select(.id == $m or (.id | startswith($m))) | .id
-    ' <<<"$json" | awk 'NF { print; exit }')
-    [[ -n $id ]] || return 1
-    printf '%s' "$id"
-    return 0
-  fi
-  id=$(jq -r '
-    [
-      .data[]?
-      | select(
-          ((.labels // []) | index("vision"))
-          or ((.id // "") | test("FLM|(?i)(-VL|VL-|vision)"))
-        )
-      | select((.labels // []) | index("image") | not)
-    ]
-    | sort_by(
-        if .recipe == "flm" then 0
-        elif ((.id // "") | test("(?i)-FLM")) then 1
-        elif .recipe == "ryzenai-llm" then 2
-        else 3 end
-      )
-    | .[0].id // empty
+  id=$(jq -r --arg m "$preferred" '
+    def available: .downloaded != false;
+    def is_vision:
+      ((.labels // []) | index("image") | not)
+      and (
+        ((.labels // []) | index("vision"))
+        or ((.id // "") | test("(?i)(qwen3vl|qwen2\\.?5vl|qwen2vl|-vl-|vl-it|minicpm-v|llava)"))
+      );
+    def npu_rank:
+      if .recipe == "flm" then 0
+      elif ((.id // "") | test("(?i)-FLM")) then 1
+      elif .recipe == "ryzenai-llm" then 2
+      else 3 end;
+    [.data[]? | select(available and is_vision)] as $c
+    | (
+        if ($m | length) > 0 then
+          $c | map(select(.id == $m or (.id | startswith($m)))) | .[0]
+        else null end
+      ) as $hit
+    | if $hit then $hit.id
+      else ($c | sort_by((.size // 1e9), npu_rank) | .[0].id // empty)
+      end
   ' <<<"$json")
   [[ -n $id && $id != null ]] || return 1
   printf '%s' "$id"

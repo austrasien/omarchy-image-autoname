@@ -14,11 +14,12 @@ BACKEND="${BACKEND:-auto}"
 LANGUAGE="${LANGUAGE:-en}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5vl:3b}"
-LEMONADE_HOST="${LEMONADE_HOST:-http://127.0.0.1:8000}"
-LEMONADE_MODEL="${LEMONADE_MODEL:-}"
+LEMONADE_HOST="${LEMONADE_HOST:-http://127.0.0.1:13305}"
+LEMONADE_MODEL="${LEMONADE_MODEL:-qwen3.5-4b-FLM}"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
 OCR_LANGS="${OCR_LANGS:-eng+fra}"
 SYMLINK_SECONDS="${SYMLINK_SECONDS:-180}"
+VISION_KEEP_ALIVE="${VISION_KEEP_ALIVE:-300}"
 
 PROMPT_EN='You are naming a screenshot. Reply ONLY with what is happening in the rest of the image, excluding the browser and site name (3 to 8 words). Forbidden: web page, website, web app, document, the browser name, the site name. Examples: Channel discussion, Issue comments open, Search for pasta recipe, City map, Filled-in form. No quotes, no trailing punctuation, no extension, no date. Ignore File/Edit/View menus, copyright marks, clocks. English, except proper nouns.'
 
@@ -191,10 +192,27 @@ build_prompt() {
 }
 
 describe_lemonade() {
-  local base json model tmp prompt jsonf resp imgf mime recipe
+  local base json model tmp prompt jsonf resp imgf mime recipe have action
+  ensure_lemonade_server || return 1
   base=$(lemonade_api_base "$LEMONADE_HOST") || return 1
-  json=$(curl -sf --max-time 2 "$base/models") || return 1
+  json=$(curl -sf --max-time 2 "$base/models?show_all=true") \
+    || json=$(curl -sf --max-time 2 "$base/models") \
+    || return 1
   model=$(printf '%s' "$json" | lemonade_pick_vision_model "${LEMONADE_MODEL:-}") || return 1
+  have=$(lemonade_loaded_model "$base")
+  action=$(lemonade_slot_action "$model" "$have")
+  case "$action" in
+    skip)
+      log "Lemonade already has $have; not evicting it"
+      return 1
+      ;;
+    use)
+      log "Lemonade already has $model (leaving it loaded)"
+      ;;
+    load)
+      log "Lemonade loading $model for this screenshot"
+      ;;
+  esac
   recipe=$(jq -r --arg m "$model" '.data[]? | select(.id == $m) | .recipe // empty' <<<"$json")
   log "Lemonade model $model${recipe:+ (recipe $recipe)}"
 
@@ -225,14 +243,35 @@ describe_lemonade() {
       }]
     }' >"$jsonf"
   rm -f "$imgf"
+  if [[ $action == load ]]; then
+    remember_our_lemonade_model "$model"
+    curl -sf --max-time 90 "$base/load" \
+      -H 'Content-Type: application/json' \
+      -d "$(jq -n --arg m "$model" '{model_name:$m}')" >/dev/null || true
+    local i loaded=""
+    for i in $(seq 1 40); do
+      loaded=$(lemonade_loaded_model "$base")
+      if [[ $loaded == "$model" || $loaded == "$model"* ]]; then
+        break
+      fi
+      sleep 0.5
+    done
+  fi
   resp=$(curl -sf --max-time 45 "$base/chat/completions" \
     -H 'Content-Type: application/json' \
     --data-binary @"$jsonf") || { rm -f "$jsonf"; return 1; }
   rm -f "$jsonf"
+  if [[ $action == load && VISION_KEEP_ALIVE -eq 0 ]]; then
+    lemonade_unload_model "$model"
+    rm -f "$STATE_DIR/our-lemonade-model"
+  elif [[ $action == use && -f $STATE_DIR/our-lemonade-model ]]; then
+    note_vision_use
+  fi
   jq -r '.choices[0].message.content // empty' <<<"$resp"
 }
 
 describe_ollama() {
+  ensure_ollama_server || return 1
   curl -sf --max-time 1 "$OLLAMA_HOST/api/tags" >/dev/null || return 1
   curl -sf --max-time 1 "$OLLAMA_HOST/api/tags" \
     | jq -e --arg m "$OLLAMA_MODEL" '.models[]? | select(.name == $m or (.name | startswith($m)))' >/dev/null \
@@ -251,7 +290,8 @@ describe_ollama() {
     --arg model "$OLLAMA_MODEL" \
     --arg prompt "$prompt" \
     --rawfile img "$imgf" \
-    '{model:$model, prompt:$prompt, images:[$img], stream:true, keep_alive:"5m", options:{temperature:0.1, num_predict:32, num_ctx:2048}}' \
+    --arg keepalive "${VISION_KEEP_ALIVE}s" \
+    '{model:$model, prompt:$prompt, images:[$img], stream:true, keep_alive:$keepalive, options:{temperature:0.1, num_predict:32, num_ctx:2048}}' \
     >"$jsonf"
   rm -f "$imgf"
   resp=$(curl -sS -N --max-time 45 "$OLLAMA_HOST/api/generate" \
@@ -450,16 +490,33 @@ if [[ $ORIGINAL_BASE == screenshot-* ]]; then
   if [[ ! -e $link ]]; then
     ln -sfn "$DEST_BASE" "$link"
     (
+      # Drop inherited flock FDs so the next screenshot is not blocked for SYMLINK_SECONDS.
+      if [[ -d /proc/self/fd ]]; then
+        for fd in /proc/self/fd/*; do
+          n=${fd##*/}
+          case $n in
+            0 | 1 | 2) continue ;;
+            *) eval "exec ${n}>&-" 2>/dev/null || true ;;
+          esac
+        done
+      fi
       sleep "$SYMLINK_SECONDS"
       if [[ -L $link ]]; then
         rm -f "$link"
       fi
-    ) &
+    ) >/dev/null 2>&1 &
     disown
   fi
 fi
 
+if command -v wl-copy >/dev/null; then
+  wl-copy -n -- "$DEST" || true
+fi
+
 if command -v omarchy-notification-send >/dev/null; then
-  omarchy-notification-send "Screenshot renamed" "$DEST_BASE" --image "$DEST" \
-    --exec "${OMARCHY_SCREENSHOT_EDITOR:-tensaku-edit}" "$DEST" -t 4000 || true
+  # Left click opens the editor (--exec). Right click copies the image
+  # (austraz.notifications invokePopupRight → copy-to-clipboard.sh).
+  # -t must come before --exec: everything after --exec is the click command.
+  omarchy-notification-send "Screenshot renamed" "$DEST_BASE" --image "$DEST" -t 4000 \
+    --exec "${OMARCHY_SCREENSHOT_EDITOR:-tensaku-edit}" "$DEST" || true
 fi

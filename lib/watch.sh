@@ -72,16 +72,20 @@ process_one() {
     timeout --signal=TERM --kill-after=8 75 \
     flock "$LOCK" nice -n 10 "$AUTONAME" "$path" \
     || { abort_ollama_runner; echo "autoname failed: $path" >&2; }
+  release_idle_runtimes
 }
 
 sweep_pending() {
   local dir f
   shopt -s nullglob
   for dir in "${existing[@]}"; do
-    for f in "$dir"/screenshot-*.png; do
+    # Newest first, and ignore leftovers older than 20 minutes so they cannot starve Print.
+    while IFS= read -r f; do
+      [[ -n $f ]] || continue
       process_one "$f"
-    done
+    done < <(find "$dir" -maxdepth 1 -name 'screenshot-*.png' -type f ! -type l -mmin -20 -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{ $1=""; sub(/^ /,""); print }')
   done
+  release_idle_runtimes
 }
 
 # Catch files whose inotify event was lost while Ollama was stuck.

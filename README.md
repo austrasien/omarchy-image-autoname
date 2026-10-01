@@ -55,6 +55,7 @@ Omarchy already takes excellent screenshots. This project only names them. Print
 ### 🛡 Conservative by default
 - Leaves `logo-acme.png` and anything you already named alone.
 - Keeps the original `screenshot-*.png` path as a symlink for a few minutes so Omarchy’s **Edit** notification still opens.
+- **Rename toast:** left-click still opens the editor; **right-click copies the image** (pixels, not the path) if you also run the notifications clone from [omarchy-translate](https://github.com/austrasien/omarchy-translate) v1.2.0+.
 - Window hints live in `$XDG_RUNTIME_DIR` (tmpfs), not next to the pictures.
 
 ### 🌍 Filename language

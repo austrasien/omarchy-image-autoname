@@ -49,6 +49,7 @@ need flock
 need timeout
 need file
 need realpath
+need wl-copy
 
 echo "Installing to $DEST"
 mkdir -p "$DEST" "$BIN" "$CONF_DIR"
@@ -108,7 +109,7 @@ LUA
 echo
 if ((${#MISSING[@]})); then
   echo "Missing commands: ${MISSING[*]}"
-  echo "On Omarchy:  omarchy pkg add jq inotify-tools imagemagick"
+  echo "On Omarchy:  omarchy pkg add jq inotify-tools imagemagick wl-clipboard"
   echo "Optional:    omarchy pkg add ollama tesseract tesseract-data-eng tesseract-data-fra"
   echo "Optional:    Lemonade + FastFlowLM (https://github.com/lemonade-sdk/lemonade) for AMD NPU vision"
 else

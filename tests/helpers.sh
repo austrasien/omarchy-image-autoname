@@ -65,12 +65,11 @@ echo "ok: lemonade GGUF vision fallback"
 got=$(printf '%s' "$models_json" | lemonade_pick_vision_model "Gemma-3-4b-it-GGUF")
 [[ $got == "Gemma-3-4b-it-GGUF" ]] || { echo "FAIL: preferred model '$got'" >&2; fail=1; }
 echo "ok: lemonade preferred model"
-if printf '%s' "$models_json" | lemonade_pick_vision_model "missing-model"; then
-  echo "FAIL: missing lemonade model should error" >&2
-  fail=1
-else
-  echo "ok: lemonade missing model"
-fi
+got=$(printf '%s' "$models_json" | lemonade_pick_vision_model "missing-model")
+[[ $got == "qwen3.5-4b-FLM" ]] || { echo "FAIL: missing preferred should fall back '$got'" >&2; fail=1; }
+echo "ok: lemonade missing preferred falls back"
+[[ -x $ROOT/lib/copy-to-clipboard.sh ]] || { echo "FAIL: copy-to-clipboard.sh missing" >&2; fail=1; }
+echo "ok: copy-to-clipboard.sh"
 
 if ((fail)); then
   echo "Some checks failed" >&2
