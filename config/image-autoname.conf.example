@@ -20,6 +20,9 @@ SYMLINK_SECONDS=180
 # Auto-picks a vision model, preferring FastFlowLM (recipe flm, often *-FLM) on the NPU.
 LEMONADE_HOST=http://127.0.0.1:8000
 # LEMONADE_MODEL=qwen3.5-4b-FLM
+# Behind npu-queue (omarchy-translate v1.4.0+): LEMONADE_HOST=http://127.0.0.1:13306
+# and how long a screenshot may wait for the NPU before falling back (seconds).
+# LEMONADE_QUEUE_WAIT=60
 
 OLLAMA_HOST=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen2.5vl:3b

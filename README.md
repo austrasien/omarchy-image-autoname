@@ -111,6 +111,7 @@ image-autoname --force ~/Pictures/some-generic-name.png
 | `LANGUAGE` | `en` (default) or `fr` |
 | `LEMONADE_HOST` | Default `http://127.0.0.1:8000` |
 | `LEMONADE_MODEL` | Empty = prefer FastFlowLM (`flm` / `*-FLM`), else first `vision` model |
+| `LEMONADE_QUEUE_WAIT` | `0` = call Lemonade directly. With [npu-queue](https://github.com/austrasien/omarchy-translate#-optional-npu-queue) on `13306`: seconds to wait for the NPU as a `background` job before falling back (e.g. `60`) |
 | `OLLAMA_MODEL` | Default `qwen2.5vl:3b` |
 | `SYMLINK_SECONDS` | How long the original screenshot path stays as a symlink |
 

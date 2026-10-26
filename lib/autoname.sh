@@ -257,8 +257,17 @@ describe_lemonade() {
       sleep 0.5
     done
   fi
-  resp=$(curl -sf --max-time 45 "$base/chat/completions" \
-    -H 'Content-Type: application/json' \
+  # Behind npu-queue (omarchy-translate), wait at most LEMONADE_QUEUE_WAIT seconds
+  # for the NPU as a background job, then fall back to the next backend.
+  local queue_wait=${LEMONADE_QUEUE_WAIT:-0}
+  local -a queue=()
+  if ((queue_wait > 0)); then
+    queue=(-H 'X-NPU-Priority: background'
+      -H "X-NPU-Max-Wait: $queue_wait"
+      -H 'X-NPU-Client: image-autoname')
+  fi
+  resp=$(curl -sf --max-time $((45 + queue_wait)) "$base/chat/completions" \
+    -H 'Content-Type: application/json' "${queue[@]}" \
     --data-binary @"$jsonf") || { rm -f "$jsonf"; return 1; }
   rm -f "$jsonf"
   if [[ $action == load && VISION_KEEP_ALIVE -eq 0 ]]; then
