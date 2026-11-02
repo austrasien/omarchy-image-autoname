@@ -34,7 +34,7 @@ Omarchy already takes excellent screenshots. This project only names them. Print
 | :--- | :--- | :--- |
 | **Filename** | `screenshot-2026-01-15_09-30-00.png` | `Brave - Page Discord - Channel discussion - …` |
 | **Context** | Date only | App, site (from the PWA/window class), and what is on screen |
-| **Privacy** | — | Local Lemonade or Ollama; cloud Gemini is opt-in |
+| **Privacy** | — | Local Lemonade or Ollama; cloud Claude Code / Gemini are opt-in |
 | **Your files** | — | Only *generic* names are touched (`screenshot-*`, `IMG_1234`, …) |
 
 > **Note:** This is **not** an Omarchy shell plugin. `omarchy plugin add` installs QML into `omarchy-shell` and never runs an installer, so it cannot rebind Print, start a watcher, or pull a vision model.
@@ -50,7 +50,7 @@ Omarchy already takes excellent screenshots. This project only names them. Print
 - Prefers [Lemonade](https://github.com/lemonade-sdk/lemonade) when it is already running. Vision models using **FastFlowLM** (`recipe: flm`, often `*-FLM`) are chosen first so the Ryzen AI **NPU** does the work; otherwise Lemonade falls through to llama.cpp GGUF on the iGPU.
 - Otherwise asks [Ollama](https://ollama.com/) (`qwen2.5vl:3b` by default) what is happening **in the rest of the capture**.
 - Discards vague labels (`web page`, `site web`, `application web`) and falls back to the tab title.
-- Optional Tesseract OCR, then optional Gemini if `GEMINI_API_KEY` is set.
+- Optional cloud fallback: [Claude Code](https://claude.com/claude-code) (`CLAUDE_FALLBACK=1`, uses your `claude` login) or Gemini if `GEMINI_API_KEY` is set, then Tesseract OCR.
 
 ### 🛡 Conservative by default
 - Leaves `logo-acme.png` and anything you already named alone.
@@ -107,7 +107,9 @@ image-autoname --force ~/Pictures/some-generic-name.png
 | Variable | Meaning |
 | :--- | :--- |
 | `WATCH_DIRS` | Directories to watch (`Pictures` and `Downloads` by default) |
-| `BACKEND` | `auto` (Lemonade → Ollama → Gemini → OCR), or `lemonade` / `ollama` / `gemini` / `ocr` |
+| `BACKEND` | `auto` (Lemonade → Ollama → Claude Code → Gemini → OCR), or `lemonade` / `ollama` / `claude` / `gemini` / `ocr` |
+| `CLAUDE_FALLBACK` | `1` = try headless Claude Code in `auto` mode (off by default) |
+| `CLAUDE_MODEL` | Default `haiku` |
 | `LANGUAGE` | `en` (default) or `fr` |
 | `LEMONADE_HOST` | Default `http://127.0.0.1:8000` |
 | `LEMONADE_MODEL` | Empty = prefer FastFlowLM (`flm` / `*-FLM`), else first `vision` model |
@@ -121,7 +123,9 @@ French filenames:
 LANGUAGE=fr
 ```
 
-Gemini, if enabled, receives a **resized** copy of the image. Leave `GEMINI_API_KEY` unset unless that is acceptable.
+Claude Code and Gemini, if enabled, receive a **resized** copy of the image. Leave `CLAUDE_FALLBACK=0` and `GEMINI_API_KEY` unset unless that is acceptable.
+
+Reasoning models (e.g. Qwen3.6 35B-A3B on FastFlowLM) are called with `enable_thinking: false` so the short title is not eaten by the reasoning budget.
 
 On a Ryzen AI PC, start [Lemonade](https://github.com/lemonade-sdk/lemonade) with the **FastFlowLM** backend installed (`lemonade-server recipes --install flm:default`) and download a vision model (`*-FLM` in the catalog, or any model labeled `vision`). With `BACKEND=auto`, image-autoname uses Lemonade and does not start Ollama. Pin a model with `LEMONADE_MODEL=…` if several vision models are installed.
 

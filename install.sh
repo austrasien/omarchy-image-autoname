@@ -94,8 +94,15 @@ append_marked() {
   echo "Updated $file"
 }
 
+# v1.4 renamed start-ollama.sh → start-lemonade.sh; fix older autostart lines in place.
+if [[ -f $HYPR/autostart.lua ]] && grep -qF "image-autoname/start-ollama.sh" "$HYPR/autostart.lua"; then
+  sed -i 's#image-autoname/start-ollama\.sh#image-autoname/start-lemonade.sh#' "$HYPR/autostart.lua"
+  echo "Renamed start-ollama.sh → start-lemonade.sh in $HYPR/autostart.lua"
+fi
+rm -f "$DEST/start-ollama.sh" 2>/dev/null || true
+
 append_marked "$HYPR/autostart.lua" "$(cat <<'LUA'
-o.exec_on_start(os.getenv("HOME") .. "/.config/omarchy/image-autoname/start-ollama.sh")
+o.exec_on_start(os.getenv("HOME") .. "/.config/omarchy/image-autoname/start-lemonade.sh")
 o.exec_on_start(os.getenv("HOME") .. "/.config/omarchy/image-autoname/watch.sh")
 LUA
 )"

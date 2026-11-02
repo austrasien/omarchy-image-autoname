@@ -6,9 +6,12 @@ WATCH_DIRS=(
   "$HOME/Downloads"
 )
 
-# auto: Lemonade (if a vision model is loaded) → Ollama → Gemini if GEMINI_API_KEY is set → Tesseract
-# Force one engine with: lemonade | ollama | gemini | ocr
+# auto: Lemonade (if a vision model is loaded) → Ollama → Claude Code if CLAUDE_FALLBACK=1
+#       → Gemini if GEMINI_API_KEY is set → Tesseract
+# Force one engine with: lemonade | ollama | claude | gemini | ocr
 BACKEND=auto
+# CLAUDE_FALLBACK=1
+# CLAUDE_MODEL=haiku
 
 # Filename language for the vision model: en or fr
 LANGUAGE=en

@@ -17,6 +17,8 @@ OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5vl:3b}"
 LEMONADE_HOST="${LEMONADE_HOST:-http://127.0.0.1:13305}"
 LEMONADE_MODEL="${LEMONADE_MODEL:-qwen3.5-4b-FLM}"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
+CLAUDE_FALLBACK="${CLAUDE_FALLBACK:-0}"
+CLAUDE_MODEL="${CLAUDE_MODEL:-haiku}"
 OCR_LANGS="${OCR_LANGS:-eng+fra}"
 SYMLINK_SECONDS="${SYMLINK_SECONDS:-180}"
 VISION_KEEP_ALIVE="${VISION_KEEP_ALIVE:-300}"
@@ -234,6 +236,7 @@ describe_lemonade() {
       model: $model,
       temperature: 0.1,
       max_tokens: 32,
+      enable_thinking: false,
       messages: [{
         role: "user",
         content: [
@@ -266,7 +269,7 @@ describe_lemonade() {
       -H "X-NPU-Max-Wait: $queue_wait"
       -H 'X-NPU-Client: image-autoname')
   fi
-  resp=$(curl -sf --max-time $((45 + queue_wait)) "$base/chat/completions" \
+  resp=$(curl -sf --max-time $((90 + queue_wait)) "$base/chat/completions" \
     -H 'Content-Type: application/json' "${queue[@]}" \
     --data-binary @"$jsonf") || { rm -f "$jsonf"; return 1; }
   rm -f "$jsonf"
@@ -351,6 +354,25 @@ describe_gemini() {
   jq -r '.candidates[0].content.parts[0].text // empty' <<<"$resp"
 }
 
+describe_claude() {
+  command -v claude >/dev/null || return 1
+  local dir img out
+  dir=$(mktemp -d)
+  img="$dir/image.jpg"
+  magick "$FILE" -auto-orient -resize '1280x1280>' -strip -quality 80 "$img" || { rm -rf "$dir"; return 1; }
+  # Headless Claude Code: only the Read tool, no MCP, no project/user settings, no saved session.
+  out=$(cd "$dir" && timeout 90 claude -p \
+    --model "$CLAUDE_MODEL" \
+    --tools Read --allowedTools Read \
+    --strict-mcp-config --setting-sources "" --disable-slash-commands \
+    --no-session-persistence --output-format text \
+    "$(build_prompt)
+
+Read the image at $img, then reply with the title only." 2>/dev/null) || { rm -rf "$dir"; return 1; }
+  rm -rf "$dir"
+  printf '%s\n' "$out" | tail -n 1
+}
+
 describe_ocr() {
   command -v tesseract >/dev/null || return 1
   local tmp text langs=$OCR_LANGS
@@ -376,6 +398,7 @@ describe_image() {
   case "$BACKEND" in
     lemonade) title=$(describe_lemonade || true) ;;
     ollama) title=$(describe_ollama || true) ;;
+    claude) title=$(describe_claude || true) ;;
     gemini) title=$(describe_gemini || true) ;;
     ocr) title=$(describe_ocr || true) ;;
     auto)
@@ -384,8 +407,12 @@ describe_image() {
         log "Lemonade unavailable, trying Ollama"
         title=$(describe_ollama || true)
       fi
+      if [[ -z $title && $CLAUDE_FALLBACK == 1 ]]; then
+        log "Ollama unavailable, trying Claude Code"
+        title=$(describe_claude || true)
+      fi
       if [[ -z $title ]]; then
-        log "Ollama unavailable, trying Gemini"
+        log "No vision result yet, trying Gemini"
         title=$(describe_gemini || true)
       fi
       if [[ -z $title ]]; then
