@@ -23,9 +23,9 @@ OCR_LANGS="${OCR_LANGS:-eng+fra}"
 SYMLINK_SECONDS="${SYMLINK_SECONDS:-180}"
 VISION_KEEP_ALIVE="${VISION_KEEP_ALIVE:-300}"
 
-PROMPT_EN='You are naming a screenshot. Reply ONLY with what is happening in the rest of the image, excluding the browser and site name (3 to 8 words). Forbidden: web page, website, web app, document, the browser name, the site name. Examples: Channel discussion, Issue comments open, Search for pasta recipe, City map, Filled-in form. No quotes, no trailing punctuation, no extension, no date. Ignore File/Edit/View menus, copyright marks, clocks. English, except proper nouns.'
+PROMPT_EN='You are naming a screenshot. Reply ONLY with what is happening in the rest of the image, excluding the browser and site name: at most 8 words, as one complete phrase. Forbidden: web page, website, web app, document, the browser name, the site name. Examples: Channel discussion, Issue comments open, Search for pasta recipe, City map, Filled-in form. No quotes, no trailing punctuation, no extension, no date. Ignore File/Edit/View menus, copyright marks, clocks. English, except proper nouns.'
 
-PROMPT_FR='Tu analyses une capture d'\''écran. Réponds UNIQUEMENT par ce qui se passe dans le reste de l'\''image, hors navigateur et hors site (3 à 8 mots). Interdit: page web, site web, application web, document, le nom du navigateur, le nom du site. Exemples: Discussion dans un salon, Commentaires d'\''une issue, Recherche recette pasta, Carte d'\''une ville, Formulaire rempli. Pas de guillemets, pas de ponctuation finale, pas d'\''extension, pas de date. Français, sauf noms propres. Ignore menus File/Edit/View, ©, horloges.'
+PROMPT_FR='Tu analyses une capture d'\''écran. Réponds UNIQUEMENT par ce qui se passe dans le reste de l'\''image, hors navigateur et hors site : 8 mots au maximum, en une expression complète. Interdit: page web, site web, application web, document, le nom du navigateur, le nom du site. Exemples: Discussion dans un salon, Commentaires d'\''une issue, Recherche recette pasta, Carte d'\''une ville, Formulaire rempli. Pas de guillemets, pas de ponctuation finale, pas d'\''extension, pas de date. Français, sauf noms propres. Ignore menus File/Edit/View, ©, horloges.'
 
 if [[ ${LANGUAGE,,} == fr ]]; then
   PROMPT=$PROMPT_FR
@@ -146,12 +146,15 @@ sanitize_title() {
   t=$(printf '%s' "$t" | awk '{
     out=""
     n=0
-    for (i=1; i<=NF && n<8; i++) {
+    for (i=1; i<=NF && n<10; i++) {
       if (length($i) < 2) continue
       if ($i ~ /^[ox]$/) continue
-      out = (out ? out " " : "") $i
-      n++
+      w[++n] = $i
     }
+    # A cut can leave a dangling connector ("... with logo and"): drop it.
+    stop = "|and|or|with|of|to|for|the|a|an|in|on|at|by|from|et|ou|avec|de|du|des|la|le|les|un|une|en|au|aux|pour|sur|par|"
+    while (n > 1 && index(stop, "|" tolower(w[n]) "|")) n--
+    for (i=1; i<=n; i++) out = (out ? out " " : "") w[i]
     print out
   }')
   t=${t:0:80}

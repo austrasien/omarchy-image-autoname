@@ -66,7 +66,15 @@ process_one() {
   mkdir -p "$HINT_DIR"
   hint="$HINT_DIR/$(basename "$path").json"
   if [[ ! -f $hint ]]; then
-    snapshot_window "$hint"
+    # omasnap (Omarchy 4.5+) prints no path, so capture-screenshot.sh cannot copy
+    # its Print-time window hint; reuse it while fresh instead of re-snapshotting.
+    local pre="$STATE_DIR/last-window.json"
+    if [[ $(basename "$path") == screenshot-* && -f $pre ]] &&
+      (($(date +%s) - $(stat -c %Y "$pre") <= 30)); then
+      cp -- "$pre" "$hint"
+    else
+      snapshot_window "$hint"
+    fi
   fi
   IMAGE_AUTONAME_WATCH=1 IMAGE_AUTONAME_HINT=$hint \
     timeout --signal=TERM --kill-after=8 75 \
@@ -83,7 +91,8 @@ sweep_pending() {
     while IFS= read -r f; do
       [[ -n $f ]] || continue
       process_one "$f"
-    done < <(find "$dir" -maxdepth 1 -name 'screenshot-*.png' -type f ! -type l -mmin -20 -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{ $1=""; sub(/^ /,""); print }')
+    # Depth 2: Omarchy 4.5 saves to ~/Pictures/Screenshots.
+    done < <(find "$dir" -maxdepth 2 -name 'screenshot-*.png' -type f ! -type l -mmin -20 -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{ $1=""; sub(/^ /,""); print }')
   done
   release_idle_runtimes
 }
@@ -98,8 +107,9 @@ sweep_pending() {
 ) &
 
 # Close the lock fd so inotifywait cannot inherit it and pin the lock after we die.
+# create: omasnap writes via O_TMPFILE + linkat, which emits no named close_write.
 inotifywait -m -r \
-  -e close_write,moved_to \
+  -e create,close_write,moved_to \
   --exclude '/\.' \
   --format '%w%f' \
   "${existing[@]}" 9>&- |
